@@ -1,0 +1,8 @@
+
+Title: Salesforce Developers
+Link: https://www.youtube.com/watch?v=ZU1bJkGIxkk&ab_channel=SalesforceDevelopers
+Description: Uses the command 'sf org login sfdx-url'
+
+
+
+NOTE: ISSUE WITH THIS APPROACH IS THAT IT USES CONNECTED APP OF PLATFORM CLI AND NOT A CUSTOM CONNECTED APP.
