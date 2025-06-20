@@ -1,64 +1,67 @@
-name: Deploy to Salesforce on PR Merge
+﻿name: Validate to FullCopy on PR Merge
 
 on:
   pull_request:
     types: [opened, edited, synchronize, reopened]
+    branches:
+      - 'fullcopy'
 
 jobs:
-  Check-Only-Deploy:
-    runs-on:  ubuntu-latest
-    steps:
+    Validate-Deploy-to-FullCopy:
+      if: startsWith(github.head_ref, 'STRY')
+      runs-on:  ubuntu-latest
+      steps:
+        # Install Salesforce CLI
+        - name: Install Salesforce CLI
+          run: |
+            npm install @salesforce/cli --global
+            sf --version
+        # SFDX-Git-Delta
+        - name: Install plugins
+          run: |
+            echo y | sf plugins install sfdx-git-delta
+            sf plugins inspect sfdx-git-delta
+        # Install utilities
+        - name: Install utilities
+          run: |
+             pip install yq
+             xq --version
+        # Checkout the code in the pull request
+        - name: Checkout
+          uses: actions/checkout@v4
+          with:
+            fetch-depth: 0
+        # Authenticate to target org
+        - name: "Authenticate to Org"
+          run: |
+            echo "${{ secrets.JWT_PRIVATE_KEY }}" > server.key
+            sf org login jwt -i ${{ secrets.SF_CLIENT_ID }} -o ${{ secrets.SF_USERNAME }} -f server.key -a defaultUser -s 
 
-      ###Requirements:
-      # >> Need JWT flow setup based on JWT Certificate and Connected App
-      # >> Connected Apps access must be provided to user.
-      # >> Configure the below
-      #   - JWT_PRIVATE_KEY: key of the cert
-      #   - SF_CLIENT_ID: consumer key of the connected app
-      #   - SF_USERNAME: username with which authentication takes place
-      # NOTE: TEST Classes is not yet implemented
+        # Authenticate with logged in user to target org
+        - name: 'Fetch user'
+          run: |
+           sf data query --query "SELECT username FROM User Where vcs_username__c = '${{github.event.pull_request.user.login}}'" -r json > data.json
 
-      # Install Salesforce CLI
-      - name: Install Salesforce CLI
-        run: |
-          npm install @salesforce/cli --global
-          sf --version
+           TOTALSIZE=$(jq -r '.result.totalSize' data.json)
 
-      # SFDX-Git-Delta
-      - name: Install plugins
-        run: |
-          echo y | sf plugins install sfdx-git-delta
-          sf plugins
+           echo "TOTALSIZE --> $TOTALSIZE"
 
-      # Install utilities
-      - name: Install utilities
-        run: |
-         pip install yq
-         xq --version
-      
-      # Checkout the code in the pull request
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+            if [ "$TOTALSIZE" -eq 1 ]; then
+              USERNAME=$(jq -r '.result.records[0].Username' data.json)
+              echo y | sf org logout
+              sf org login jwt -i ${{ secrets.SF_CLIENT_ID }} -o $USERNAME -f server.key -a defaultUser -s
+            else
+              echo "Request to fetch username not found"
+            fi
 
-      # Fetch base branch
-      - name: Fetch base branch
-        run: |
-          git fetch origin ${{ github.event.pull_request.base.ref }}
-
-      # Authenticate to target org
-      - name: "Authenticate to Org"
-        run: |
-          echo "${{ secrets.JWT_PRIVATE_KEY }}" > server.key
-          sf org login jwt -i ${{ secrets.SF_CLIENT_ID }} -o ${{ secrets.SF_USERNAME }} -f server.key -s 
-          
-      # Check-only deploy
-      - name: "Check-only delta deploy"
-        run: |
-          mkdir mdList
-          sf sgd source delta -f "HEAD~$(git rev-list --count HEAD ^${{ github.event.pull_request.base.ref }})" -o mdList/ -i .forceignore
-          echo "--- package.xml generated with added and modified metadata ---"
-          cat mdList/package/package.xml
-          echo "--- Delta Check-Only Deploy ---"
-          sf project deploy start -x mdList/package/package.xml -w 30 --dry-run
+        # Check-only deploy
+        - name: "Check-only delta deploy"
+          run: |
+            git checkout '${{ github.head_ref }}'
+            mkdir mdList
+            sf sgd source delta -f "origin/main" -o mdList/ -i .forceignore
+            echo "--- package.xml generated with added and modified metadata ---"
+            cat mdList/package/package.xml
+            echo "--- Delta Check-Only Deploy ---"
+            git checkout -
+            sf project deploy start -x mdList/package/package.xml -w 30 --dry-run
