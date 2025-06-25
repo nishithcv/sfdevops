@@ -1,36 +1,31 @@
-name: Validate to FullCopy on PR Merge
+name: Validate to UAT on PR Merge
 
 on:
   pull_request:
     types: [opened, edited, synchronize, reopened]
     branches:
-      - 'fullcopy'
+      - 'uat'
 
 jobs:
-    Validate-Deploy-to-FullCopy:
+    Validate-Deploy-to-UAT:
       if: startsWith(github.head_ref, 'STRY')
       runs-on:  ubuntu-latest
       steps:
-        # Install Salesforce CLI
-        - name: Install Salesforce CLI
+
+        # Installing below:
+          # sf cli
+          # sfdx-git-delta plugin - sf cli plugin
+        - name: Install Dependencies
           run: |
-            npm install @salesforce/cli --global
-            sf --version
-        # SFDX-Git-Delta
-        - name: Install plugins
-          run: |
-            echo y | sf plugins install sfdx-git-delta
-            sf plugins inspect sfdx-git-delta
-        # Install utilities
-        - name: Install utilities
-          run: |
-             pip install yq
-             xq --version
+            chmod +x ./.github/build/install_dependencies.sh
+            ./.github/build/install_dependencies.sh
+
         # Checkout the code in the pull request
         - name: Checkout
           uses: actions/checkout@v4
           with:
             fetch-depth: 0
+
         # Authenticate to target org
         - name: "Authenticate to Org"
           run: |
@@ -66,7 +61,7 @@ jobs:
               echo "No Merge conflict, proceeding with the ${{ github.head_ref }} branch for package file generation"
               git checkout '${{ github.head_ref }}'
             fi
-
+            
             mkdir mdList
             sf sgd source delta -f "origin/main" -o mdList/ -i .forceignore
             echo "--- package.xml generated with added and modified metadata ---"
@@ -75,27 +70,35 @@ jobs:
             git checkout -
             
         #Get Test Classes betweeb the strings 'TestClasses::' & '::TestClasses' in PR
-        - name: "Get Test Classes"
-          id: "GET_TESTS"
+        - name: "Test Class Check"
+          id: "CHECK_TESTS"
           run: |
             grep -qE "<name>ApexClass</name>|<name>ApexTrigger</name>" mdList/package/package.xml && RUN_TESTS=true || RUN_TESTS=false
+            echo "RUN_TESTS=$RUN_TESTS" >> $GITHUB_OUTPUT
             if [ "$RUN_TESTS" = false ]; then
-              echo "No Apex Classes/Triggers found."
-              exit 0
+              echo "No Apex Classes/Triggers found, skipping Get Test Classes Step."
             fi
-
-            PR_BODY='${{github.event.pull_request.body}}'
-
-            tmp=${PR_BODY#*TestClasses:: } 
-            $TEST_CLASSES=${tmp%% ::TestClasses*}
-            echo "Test Classes-->$TEST_CLASSES"
+        
+        - name: "Get Test Classes"
+          id: "Get_TESTS"
+          if: ${{ steps.CHECK_TESTS.outputs.RUN_TESTS == 'true' }}
+          run: |
+              echo "Begin XML Parser Installation"
+              sudo apt-get update -qq > /dev/null 2>&1
+              sudo DEBIAN_FRONTEND=noninteractive apt-get install -qq xmlstarlet &>/dev/null
+              echo "XML Parser Installed"
+              echo "${{ github.event.pull_request.body }}" > pr_body.txt
+              chmod +x ./.github/build/get_test_classes.sh
+              ./.github/build/get_test_classes.sh mdList/package/package.xml pr_body.txt
           
           # Check-only deploy - Check fi the branch ends with _MC_FC. If yes, only get the base branch's components changed
-          -name: "Validate Changes"
+        - name: "Validate Changes"
+          env:
+            RUN_TESTS: ${{ steps.CHECK_TESTS.outputs.RUN_TESTS }}
+            TEST_CLASSES: ${{ steps.GET_TESTS.outputs.TEST_CLASSES }}        
           run: |
-            if [ ${{ steps.GET_TESTS.outputs.RUN_TESTS }} = false ]; then
-              echo "Validating without Tests"
+            if [ $RUN_TESTS = false ]; then
               sf project deploy start -x mdList/package/package.xml -w 30 --dry-run
             else
-              echo "Validating with above mentioned tests"
-              sf project deploy start -x mdList/package/package.xml -w 30 --dry-run -l RunSpecifiedTests -t ${{ steps.GET_TESTS.outputs.TEST_CLASSES }}
+              sf project deploy start -x mdList/package/package.xml -w 30 --dry-run -l RunSpecifiedTests -t $TEST_CLASSES
+            fi

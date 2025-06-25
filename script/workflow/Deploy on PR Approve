@@ -1,0 +1,72 @@
+name: Deploy to FullCopy on PR Closed
+
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - 'fullcopy'
+
+jobs:
+    Deploy-to-FullCopy:
+      if: github.event.pull_request.merged == true &&
+          startsWith(github.head_ref, 'STRY')
+      runs-on:  ubuntu-latest
+      steps:
+
+        # Installing below:
+          # sf cli
+          # sfdx-git-delta plugin - sf cli plugin
+        - name: Install Dependencies
+          run: |
+            chmod +x ./.github/build/install_dependencies.sh
+            ./.github/build/install_dependencies.sh
+
+        # Checkout the code in the pull request
+        - name: Checkout
+          uses: actions/checkout@v4
+          with:
+            fetch-depth: 0
+            
+        # Authenticate to target org
+        - name: "Authenticate to Org"
+          run: |
+            echo "${{ secrets.JWT_PRIVATE_KEY }}" > server.key
+            sf org login jwt -i ${{ secrets.SF_CLIENT_ID }} -o ${{ secrets.SF_USERNAME }} -f server.key -a defaultUser -s 
+
+        # Authenticate with logged in user to target org
+        - name: 'Fetch user'
+          run: |
+           sf data query --query "SELECT username FROM User Where vcs_username__c = '${{github.event.pull_request.user.login}}'" -r json > data.json
+
+           TOTALSIZE=$(jq -r '.result.totalSize' data.json)
+
+           echo "TOTALSIZE --> $TOTALSIZE"
+
+            if [ "$TOTALSIZE" -eq 1 ]; then
+              USERNAME=$(jq -r '.result.records[0].Username' data.json)
+              echo y | sf org logout
+              sf org login jwt -i ${{ secrets.SF_CLIENT_ID }} -o $USERNAME -f server.key -a defaultUser -s
+            else
+              echo "Request to fetch username not found"
+            fi
+            
+        # Deploy Delta
+        - name: "Deploy Delta Changes"
+          run: |
+            if [[ "${{ github.head_ref }}" =~ _MC_FC$ ]]; then
+              CURRENTBRANCH=${{ github.head_ref }}
+              MODIFIEDBRANCH="${CURRENTBRANCH%_MC_FC}"
+              echo "Merge conflict detected, using the base branch $MODIFIEDBRANCH to generate package file"
+              git checkout $MODIFIEDBRANCH
+            else
+              echo "No Merge conflict, proceeding with the ${{ github.head_ref }} branch for package file generation"
+              git checkout '${{ github.head_ref }}'
+            fi
+
+            mkdir mdList
+            sf sgd source delta -f "origin/main" -o mdList/ -i .forceignore
+            echo "--- package.xml generated with added and modified metadata ---"
+            cat mdList/package/package.xml
+            echo -e"\n--- Delta Check-Only Deploy ---"
+            git checkout -
+            sf project deploy start -x mdList/package/package.xml
