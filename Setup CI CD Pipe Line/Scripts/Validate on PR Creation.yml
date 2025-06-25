@@ -1,4 +1,4 @@
-﻿name: Validate to FullCopy on PR Merge
+name: Validate to FullCopy on PR Merge
 
 on:
   pull_request:
@@ -54,10 +54,18 @@ jobs:
               echo "Request to fetch username not found"
             fi
 
-        # Check-only deploy
+        # Check-only deploy - Check fi the branch ends with _MC_FC. If yes, only get the base branch's components changed
         - name: "Check-only delta deploy"
           run: |
-            git checkout '${{ github.head_ref }}'
+            if [[ "${{ github.head_ref }}" =~ _MC_FC$ ]]; then
+              CURRENTBRANCH=${{ github.head_ref }}
+              MODIFIEDBRANCH="${CURRENTBRANCH%_MC_FC}"
+              echo "Merge conflict detected, using the base branch $MODIFIEDBRANCH to generate package file"
+              git checkout $MODIFIEDBRANCH
+            else
+              echo "No Merge conflict, proceeding with the ${{ github.head_ref }} branch for package file generation"
+              git checkout '${{ github.head_ref }}'
+            fi
             mkdir mdList
             sf sgd source delta -f "origin/main" -o mdList/ -i .forceignore
             echo "--- package.xml generated with added and modified metadata ---"
