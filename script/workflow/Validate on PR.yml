@@ -52,9 +52,9 @@ jobs:
         #Get Modified Metadata. If there is a merge conflict, get the modified components from the actual branch and deploy contents of the current branch
         - name: "Get Modified Metadata"
           run: |
-            if [[ "${{ github.head_ref }}" =~ _MC_FC$ ]]; then
+            if [[ "${{ github.head_ref }}" =~ _MC_UAT$ ]]; then
               CURRENTBRANCH=${{ github.head_ref }}
-              MODIFIEDBRANCH="${CURRENTBRANCH%_MC_FC}"
+              MODIFIEDBRANCH="${CURRENTBRANCH%_MC_UAT}"
               echo "Merge conflict detected, using the base branch $MODIFIEDBRANCH to generate package file"
               git checkout $MODIFIEDBRANCH
             else
@@ -91,7 +91,7 @@ jobs:
               chmod +x ./.github/build/get_test_classes.sh
               ./.github/build/get_test_classes.sh mdList/package/package.xml pr_body.txt
           
-          # Check-only deploy - Check fi the branch ends with _MC_FC. If yes, only get the base branch's components changed
+          # Check-only deploy - Check fi the branch ends with _MC_UAT. If yes, only get the base branch's components changed
         - name: "Validate Changes"
           env:
             RUN_TESTS: ${{ steps.CHECK_TESTS.outputs.RUN_TESTS }}
